@@ -15,21 +15,23 @@ module Tailwindcss
         [:cpu, :os].map { |m| Gem::Platform.local.send(m) }.join("-")
       end
 
-      def executable(
-        exe_path: File.expand_path(File.join(__dir__, "..", "..", "exe"))
-      )
-        if Tailwindcss::Upstream::NATIVE_PLATFORMS.keys.none? { |p| Gem::Platform.match(Gem::Platform.new(p)) }
-          raise UnsupportedPlatformException, <<~MESSAGE
-            tailwindcss-rails does not support the #{platform} platform
-            Please install tailwindcss following instructions at https://tailwindcss.com/docs/installation
-          MESSAGE
-        end
-
+      def executable(exe_path: File.expand_path(File.join(__dir__, "..", "..", "exe")))
         exe_path = Dir.glob(File.expand_path(File.join(exe_path, "*", "tailwindcss"))).find do |f|
           Gem::Platform.match(Gem::Platform.new(File.basename(File.dirname(f))))
         end
 
         if exe_path.nil?
+          exe_path = find_executable_in_path("tailwindcss")
+        end
+
+        if exe_path.nil?
+          if Tailwindcss::Upstream::NATIVE_PLATFORMS.keys.none? { |p| Gem::Platform.match(Gem::Platform.new(p)) }
+            raise UnsupportedPlatformException, <<~MESSAGE
+              tailwindcss-rails does not support the #{platform} platform
+              Please install tailwindcss following instructions at https://tailwindcss.com/docs/installation
+            MESSAGE
+          end
+
           raise ExecutableNotFoundException, <<~MESSAGE
             Cannot find the tailwindcss executable for #{platform} in #{exe_path}
 
@@ -71,6 +73,36 @@ module Tailwindcss
           command << "-w"
           command << "-p" if poll
         end
+      end
+
+      private
+
+      def find_executable_in_path(bin)
+        # based on MakeMakefile.find_executable0
+        executable_file = proc do |name|
+          begin
+            stat = File.stat(name)
+          rescue SystemCallError
+          else
+            # look for a binary executable. ignore shim files and scripts.
+            if stat.file? and stat.executable? and File.read(name,2) != "#!"
+              next name
+            end
+          end
+        end
+
+        if path ||= ENV['PATH']
+          path = path.split(File::PATH_SEPARATOR)
+        else
+          path = %w[/usr/local/bin /usr/ucb /usr/bin /bin]
+        end
+
+        file = nil
+        path.each do |dir|
+          dir.sub!(/\A"(.*)"\z/m, '\1') if /mswin|mingw/ =~ RUBY_PLATFORM
+          return file if executable_file.call(file = File.join(dir, bin))
+        end
+        nil
       end
     end
   end

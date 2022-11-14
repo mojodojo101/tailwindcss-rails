@@ -2,9 +2,13 @@ require "test_helper"
 require "minitest/mock"
 
 class Tailwindcss::CommandsTest < ActiveSupport::TestCase
-  test ".platform is a string containing just the cpu and os (not the version)" do
-    expected = "#{Gem::Platform.local.cpu}-#{Gem::Platform.local.os}"
-    assert_equal(expected, Tailwindcss::Commands.platform)
+  setup do
+    @orig_path = ENV["PATH"]
+    ENV["PATH"] = ""
+  end
+
+  teardown do
+    ENV["PATH"] = @orig_path
   end
 
   def mock_exe_directory(platform)
@@ -18,11 +22,55 @@ class Tailwindcss::CommandsTest < ActiveSupport::TestCase
     end
   end
 
+  def mock_path_binary(shim: false)
+    Dir.mktmpdir do |dir|
+      orig_path = ENV["PATH"]
+      ENV["PATH"] = [dir, ENV["PATH"]].join(File::PATH_SEPARATOR)
+      filepath = File.join(dir, "tailwindcss")
+      FileUtils.touch(filepath)
+      FileUtils.chmod("ugo+x", filepath)
+      File.write(filepath, "#!/usr/bin/env ruby") if shim 
+      yield(dir)
+    ensure
+      ENV["PATH"] = orig_path
+    end
+  end
+
+  test ".platform is a string containing just the cpu and os (not the version)" do
+    expected = "#{Gem::Platform.local.cpu}-#{Gem::Platform.local.os}"
+    assert_equal(expected, Tailwindcss::Commands.platform)
+  end
+
   test ".executable returns the absolute path to the binary" do
     mock_exe_directory("sparc-solaris2.8") do |dir, executable|
       expected = File.expand_path(File.join(dir, "sparc-solaris2.8", "tailwindcss"))
       assert_equal(expected, executable, "assert on setup")
       assert_equal(expected, Tailwindcss::Commands.executable(exe_path: dir))
+    end
+  end
+
+  test "when a packaged exe is not found, .executable returns the absolute path to `tailwindcss` that is in PATH" do
+    mock_path_binary do |installed|
+      expected = File.join(installed, "tailwindcss")
+      assert_equal(expected, Tailwindcss::Commands.executable(exe_path: "/blurgh"))
+    end
+  end
+
+  test "when a packaged exe is not found, .executable ignores shims found in PATH" do
+    mock_path_binary(shim: true) do |installed|
+      assert_raises(Tailwindcss::Commands::ExecutableNotFoundException) do
+        Tailwindcss::Commands.executable(exe_path: "/blurgh")
+      end
+    end
+  end
+
+  test "when a packaged exe is found, .executable ignores what's in PATH" do
+    mock_exe_directory("sparc-solaris2.8") do |dir, executable|
+      mock_path_binary do |installed|
+        expected = File.expand_path(File.join(dir, "sparc-solaris2.8", "tailwindcss"))
+        assert_equal(expected, executable, "assert on setup")
+        assert_equal(expected, Tailwindcss::Commands.executable(exe_path: dir))
+      end
     end
   end
 
